@@ -58,7 +58,13 @@ async def whatsapp_webhook(
 
         # Check for clear_chat command
         if body.strip().lower() == "clear_chat":  # type: ignore
-            conversation = db.query(Conversation).filter_by(phone_number=phone).first()
+            # Get the most recent active conversation
+            conversation = (
+                db.query(Conversation)
+                .filter_by(phone_number=phone, status="active")
+                .order_by(Conversation.created_at.desc())
+                .first()
+            )
             if conversation:
                 # Delete all messages for this conversation
                 db.query(Message).filter_by(conversation_id=conversation.id).delete()
@@ -69,15 +75,38 @@ async def whatsapp_webhook(
                 db.commit()
                 logger.info(f"Cleared conversation {conversation.id} for {phone}")
             else:
-                logger.info(f"No conversation to clear for {phone}")
+                logger.info(f"No active conversation to clear for {phone}")
 
             # Return empty TwiML response
             twiml_response = """<?xml version='1.0' encoding='UTF-8'?>
 <Response></Response>"""
             return Response(content=twiml_response, media_type="application/xml")
 
-        # Get or create conversation
-        conversation = db.query(Conversation).filter_by(phone_number=phone).first()
+        # Check for new_chat command
+        if body.strip().lower() == "new_chat":  # type: ignore
+            # Archive all active conversations for this number
+            active_conversations = (
+                db.query(Conversation)
+                .filter_by(phone_number=phone, status="active")
+                .all()
+            )
+            for conv in active_conversations:
+                conv.status = "archived"
+                logger.info(f"Archived conversation {conv.id} for {phone}")
+            db.commit()
+
+            # Return empty TwiML response - next message will create new conversation
+            twiml_response = """<?xml version='1.0' encoding='UTF-8'?>
+<Response></Response>"""
+            return Response(content=twiml_response, media_type="application/xml")
+
+        # Get or create active conversation (most recent active one)
+        conversation = (
+            db.query(Conversation)
+            .filter_by(phone_number=phone, status="active")
+            .order_by(Conversation.created_at.desc())
+            .first()
+        )
 
         if not conversation:
             # Create new conversation

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import FastAPI
 
+from app.admin import setup_admin
 from app.api.webhooks.whatsapp import router as whatsapp_router
 from app.database import init_db
 
@@ -41,6 +42,9 @@ app = FastAPI(
 
 # Add middleware (disabled for now due to form data consumption issue)
 # app.add_middleware(RateLimitMiddleware, rate_limit_seconds=3)
+
+# Setup SQLAdmin
+setup_admin(app)
 
 
 @app.get("/health")
