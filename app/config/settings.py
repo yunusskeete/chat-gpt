@@ -3,6 +3,7 @@ from functools import lru_cache
 
 from dotenv import load_dotenv
 from pydantic import BaseModel
+
 from app.config.pt_defaults import PTDefaults
 
 load_dotenv()

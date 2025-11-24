@@ -11,10 +11,21 @@ class ExtractionAgent:
         self.settings = get_settings()
         self.system_prompt = """Extract structured lead information from the conversation history provided.
 
-Be conservative - only extract information that was clearly stated.
-If information wasn't mentioned, leave it as null.
+Be conservative - only extract information that was clearly stated by the user.
+If information wasn't mentioned or confirmed, leave it as null.
 
-Also determine if you have enough information to score this lead (goals, rough budget, commitment level are minimum required)."""
+## Required Information Checklist
+
+To set has_all_info = true, the user must have CONFIRMED all of these:
+1. **Goals** - Clear fitness goals stated
+2. **Budget** - User explicitly confirmed they can meet the budget requirement (not just asked, but answered affirmatively)
+3. **Commitment level** - Number of sessions per week confirmed
+4. **Age** - Age or age range stated
+5. **Location** - Location confirmed or online preference stated
+6. **Availability** - Days/times they can train
+
+CRITICAL: If the assistant just ASKED about budget but the user hasn't RESPONDED yet, budget is null and has_all_info = false.
+Do NOT mark has_all_info = true if any question is still awaiting a response."""
 
     async def extract_data(self, conversation_history: list[dict]) -> ExtractedLeadData:
         """
