@@ -163,11 +163,27 @@ The next step is a free 15-minute consultation call to discuss your specific nee
 
 Would any of these times work for you?"""
 
+    # =============================================================================
+    # INTRO MESSAGE
+    # =============================================================================
+    # First message sent when a new conversation starts
+
+    INTRO_MESSAGE = """Hey! I'm {pt_name}'s AI assistant 👋
+
+{pt_name} is all about investing quality time where it matters most - with clients who are ready to transform their physiques. To make sure your first call together is packed with value, I'm here to gather some quick context.
+
+I'll ask you a few questions about your goals, availability, and what you're looking for. This way, when you hop on a call with {pt_name}, you can hit the ground running.
+
+If you're a good fit, you could be just a few messages away from booking your intro call!
+
+Ready to get started?"""
+
     @classmethod
     def get_all_templates(cls) -> Dict[str, str]:
         """Return all prompt templates as a dictionary"""
         return {
             "pt_bio_default": cls.PT_BIO_DEFAULT,
+            "intro_message": cls.INTRO_MESSAGE,
             "discovery_system_prompt": cls.DISCOVERY_SYSTEM_PROMPT,
             "qualification_system_prompt": cls.QUALIFICATION_SYSTEM_PROMPT,
             "rejection_email": cls.REJECTION_EMAIL,

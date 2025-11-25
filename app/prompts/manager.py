@@ -133,3 +133,13 @@ class PromptManager:
             vars,
             "booking",
         )
+
+    def get_intro_message(self) -> str:
+        """Get intro message for new conversations"""
+        vars = self._get_base_vars()
+        return self._resolve(
+            self.pt.intro_message_override,  # type: ignore
+            PromptTemplates.INTRO_MESSAGE,
+            vars,
+            "intro_message",
+        )

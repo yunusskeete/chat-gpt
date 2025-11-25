@@ -28,6 +28,7 @@ class PTPreferences(Base):
     additional_info = Column(Text, nullable=True)  # Extra bio details
 
     # Agent prompt overrides
+    intro_message_override = Column(Text, nullable=True)  # Custom intro message when conversation starts
     discovery_prompt_override = Column(Text, nullable=True)  # Custom discovery system prompt
     qualification_prompt_override = Column(Text, nullable=True)  # Custom qualification prompt
     rejection_email_override = Column(Text, nullable=True)  # Custom rejection template

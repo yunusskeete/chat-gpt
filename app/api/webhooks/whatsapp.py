@@ -8,7 +8,9 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Conversation, LeadData, Message
+from app.models import Conversation, LeadData, Message, PTPreferences
+from app.prompts.manager import PromptManager
+from app.services import whatsapp_service
 from app.tasks import process_message
 
 logger = logging.getLogger(__name__)
@@ -127,6 +129,33 @@ async def whatsapp_webhook(
             db.commit()
 
             logger.info(f"Created new conversation {conversation.id} for {phone}")
+
+            # Send intro message for new conversation
+            pt = db.query(PTPreferences).filter_by(id=conversation.pt_id).first()
+            if pt:
+                prompt_manager = PromptManager(pt)
+                intro_message = prompt_manager.get_intro_message()
+
+                # Send intro message via WhatsApp
+                whatsapp_service.send_message(phone, intro_message)
+
+                # Save intro message to conversation
+                intro_msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=intro_message,
+                    timestamp=datetime.now(timezone.utc),
+                )
+                db.add(intro_msg)
+                db.commit()
+
+                logger.info(f"Sent intro message for new conversation {conversation.id}")
+
+            # Return early - don't process the first message that triggered conversation creation
+            # User needs to respond to intro message first
+            twiml_response = """<?xml version='1.0' encoding='UTF-8'?>
+<Response></Response>"""
+            return Response(content=twiml_response, media_type="application/xml")
 
         # Add background task to process message
         background_tasks.add_task(
