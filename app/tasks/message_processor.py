@@ -1,6 +1,7 @@
 """Background task processing for WhatsApp messages"""
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -12,6 +13,42 @@ from app.schemas.lead import ExtractedLeadData
 from app.services import calendar_service, whatsapp_service
 
 logger = logging.getLogger(__name__)
+
+
+def _filter_hallucinated_responses(response: str) -> str:
+    """
+    Remove any hallucinated user responses from the assistant's message.
+
+    This is a safety filter to catch cases where the LLM generates fake user responses
+    like "User: 34" or "User: I'm in London" in its output.
+
+    Args:
+        response: The raw response from the discovery agent
+
+    Returns:
+        Cleaned response with hallucinated user lines removed
+    """
+    lines = response.split('\n')
+    filtered_lines = []
+
+    for line in lines:
+        # Skip lines that look like fake user responses
+        line_stripped = line.strip()
+
+        # Check for patterns like "User:", "User: something", etc.
+        if re.match(r'^User\s*:', line_stripped, re.IGNORECASE):
+            logger.warning(f"Filtered hallucinated user response: {line_stripped}")
+            continue
+
+        filtered_lines.append(line)
+
+    cleaned = '\n'.join(filtered_lines).strip()
+
+    # Log if we removed anything
+    if cleaned != response.strip():
+        logger.info(f"Removed hallucinated content. Original length: {len(response)}, Cleaned length: {len(cleaned)}")
+
+    return cleaned
 
 
 async def process_message(
@@ -79,6 +116,9 @@ async def process_message(
         assistant_response = await discovery_agent.get_response(
             pt, conversation_history
         )
+
+        # 4.5. Safety filter: Remove any hallucinated user responses
+        assistant_response = _filter_hallucinated_responses(assistant_response)
 
         # 5. Save both messages to database
         user_msg = Message(
