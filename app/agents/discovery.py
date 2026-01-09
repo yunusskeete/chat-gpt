@@ -1,43 +1,35 @@
 """Discovery Agent - Conducts natural conversation to extract lead information"""
+import logging
 from pydantic_ai import Agent
 from app.config import get_settings
 from app.models import PTPreferences
+from app.prompts import PromptManager
+
+logger = logging.getLogger(__name__)
 
 
 class DiscoveryAgent:
-    """Agent for conducting conversational lead discovery"""
+    """Agent for conducting conversational lead discovery with observable prompt management"""
 
     def __init__(self):
         self.settings = get_settings()
         self.agent = None
 
     def _create_system_prompt(self, pt: PTPreferences) -> str:
-        """Create system prompt based on PT preferences"""
-        return f"""You are a friendly fitness assistant helping qualify potential clients for {pt.name}.
+        """
+        Create system prompt using PromptManager.
 
-PT Specialization: {pt.specialty}
-PT Preferences:
-- Target clients: {pt.target_goals}
-- Age range: {pt.age_range}
-- Location: {pt.preferred_location}
-- Budget: £{pt.min_budget}+/month
-- Commitment: {pt.required_commitment}x sessions/week
+        Resolution: Database first, file template fallback.
+        Source is logged for observability.
+        """
+        prompt_manager = PromptManager(pt)
+        prompt = prompt_manager.get_discovery_prompt()
 
-Your job:
-- Have a warm, natural conversation to discover the prospect's:
-  * Fitness goals
-  * Age
-  * Location
-  * Budget expectations
-  * Commitment level (how many sessions per week)
-  * Availability (days/times)
-- Ask ONE question at a time
-- Be encouraging and positive
-- Don't be robotic or interrogate
-- Extract information gradually through conversation
-- When you have gathered all information naturally, acknowledge you have what you need
+        # In debug mode, log full prompt for inspection
+        if self.settings.debug:
+            logger.debug("Discovery prompt for PT %s:\n%s", pt.id, prompt)
 
-Keep responses concise (2-3 sentences max) and conversational."""
+        return prompt
 
     async def get_response(self, pt: PTPreferences, conversation_history: list[dict]) -> str:
         """

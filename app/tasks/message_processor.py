@@ -1,22 +1,58 @@
 """Background task processing for WhatsApp messages"""
+
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timezone
+
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
-from app.models import Conversation, Message, LeadData, PTPreferences
 from app.agents import DiscoveryAgent, ExtractionAgent, ScoringAgent
-from app.services import whatsapp_service, calendar_service
+from app.database import SessionLocal
+from app.models import Conversation, LeadData, Message, PTPreferences
 from app.schemas.lead import ExtractedLeadData
+from app.services import calendar_service, whatsapp_service
 
 logger = logging.getLogger(__name__)
 
 
+def _filter_hallucinated_responses(response: str) -> str:
+    """
+    Remove any hallucinated user responses from the assistant's message.
+
+    This is a safety filter to catch cases where the LLM generates fake user responses
+    like "User: 34" or "User: I'm in London" in its output.
+
+    Args:
+        response: The raw response from the discovery agent
+
+    Returns:
+        Cleaned response with hallucinated user lines removed
+    """
+    lines = response.split('\n')
+    filtered_lines = []
+
+    for line in lines:
+        # Skip lines that look like fake user responses
+        line_stripped = line.strip()
+
+        # Check for patterns like "User:", "User: something", etc.
+        if re.match(r'^User\s*:', line_stripped, re.IGNORECASE):
+            logger.warning(f"Filtered hallucinated user response: {line_stripped}")
+            continue
+
+        filtered_lines.append(line)
+
+    cleaned = '\n'.join(filtered_lines).strip()
+
+    # Log if we removed anything
+    if cleaned != response.strip():
+        logger.info(f"Removed hallucinated content. Original length: {len(response)}, Cleaned length: {len(cleaned)}")
+
+    return cleaned
+
+
 async def process_message(
-    conversation_id: int,
-    phone: str,
-    user_message: str,
-    message_sid: str
+    conversation_id: int, phone: str, user_message: str, message_sid: str
 ):
     """
     Process incoming WhatsApp message with LLM agents
@@ -41,7 +77,9 @@ async def process_message(
 
     try:
         # 1. Check idempotency - if MessageSid exists, skip processing
-        existing_message = db.query(Message).filter_by(twilio_message_sid=message_sid).first()
+        existing_message = (
+            db.query(Message).filter_by(twilio_message_sid=message_sid).first()
+        )
         if existing_message:
             logger.info(f"Message {message_sid} already processed, skipping")
             return
@@ -53,10 +91,14 @@ async def process_message(
             return
 
         # Get message history
-        messages = db.query(Message).filter_by(conversation_id=conversation_id).order_by(Message.timestamp).all()
+        messages = (
+            db.query(Message)
+            .filter_by(conversation_id=conversation_id)
+            .order_by(Message.timestamp)
+            .all()
+        )
         conversation_history = [
-            {"role": msg.role, "content": msg.content}
-            for msg in messages
+            {"role": msg.role, "content": msg.content} for msg in messages
         ]
 
         # Add current user message to history
@@ -71,7 +113,12 @@ async def process_message(
         # 4. Call Discovery Agent
         logger.info(f"Calling Discovery Agent for conversation {conversation_id}")
         discovery_agent = DiscoveryAgent()
-        assistant_response = await discovery_agent.get_response(pt, conversation_history)
+        assistant_response = await discovery_agent.get_response(
+            pt, conversation_history
+        )
+
+        # 4.5. Safety filter: Remove any hallucinated user responses
+        assistant_response = _filter_hallucinated_responses(assistant_response)
 
         # 5. Save both messages to database
         user_msg = Message(
@@ -79,7 +126,7 @@ async def process_message(
             role="user",
             content=user_message,
             twilio_message_sid=message_sid,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(user_msg)
 
@@ -87,7 +134,7 @@ async def process_message(
             conversation_id=conversation_id,
             role="assistant",
             content=assistant_response,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(assistant_msg)
         db.commit()
@@ -101,11 +148,15 @@ async def process_message(
         extraction_agent = ExtractionAgent()
 
         # Add assistant response to history for extraction
-        conversation_history.append({"role": "assistant", "content": assistant_response})
+        conversation_history.append(
+            {"role": "assistant", "content": assistant_response}
+        )
         extracted_data = await extraction_agent.extract_data(conversation_history)
 
         # 8. Update or create LeadData
-        lead_data = db.query(LeadData).filter_by(conversation_id=conversation_id).first()
+        lead_data = (
+            db.query(LeadData).filter_by(conversation_id=conversation_id).first()
+        )
         if not lead_data:
             lead_data = LeadData(conversation_id=conversation_id)
             db.add(lead_data)
@@ -122,24 +173,28 @@ async def process_message(
 
         # 9. If we have all info and haven't scored yet, score and take action
         if extracted_data.has_all_info and lead_data.is_qualified is None:
-            logger.info(f"Lead has all info, proceeding to score for conversation {conversation_id}")
+            logger.info(
+                f"Lead has all info, proceeding to score for conversation {conversation_id}"
+            )
             await score_and_take_action(conversation_id, phone, pt, extracted_data, db)
 
         # Update conversation timestamp
-        conversation.updated_at = datetime.utcnow()
+        conversation.updated_at = datetime.now(timezone.utc)
         db.commit()
 
     except Exception as e:
         import traceback
-        logger.error(f"Error processing message for conversation {conversation_id}: {e}")
+
+        logger.error(
+            f"Error processing message for conversation {conversation_id}: {e}"
+        )
         logger.error(f"Traceback: {traceback.format_exc()}")
         db.rollback()
 
         # Send fallback message to user
         try:
             whatsapp_service.send_message(
-                phone,
-                "I'm having trouble processing that. Can you try again?"
+                phone, "I'm having trouble processing that. Can you try again?"
             )
         except Exception as send_error:
             logger.error(f"Failed to send fallback message: {send_error}")
@@ -153,7 +208,7 @@ async def score_and_take_action(
     phone: str,
     pt: PTPreferences,
     extracted_data: ExtractedLeadData,
-    db: Session
+    db: Session,
 ):
     """
     Score lead and take appropriate action (book call or send rejection)
@@ -172,7 +227,9 @@ async def score_and_take_action(
         score_result = await scoring_agent.score_lead(pt, extracted_data)
 
         # 2. Update LeadData with scores
-        lead_data = db.query(LeadData).filter_by(conversation_id=conversation_id).first()
+        lead_data = (
+            db.query(LeadData).filter_by(conversation_id=conversation_id).first()
+        )
         lead_data.qualification_score = score_result.overall_score
         lead_data.is_qualified = score_result.is_qualified
         lead_data.reasoning = score_result.reasoning
@@ -182,20 +239,23 @@ async def score_and_take_action(
         if score_result.recommended_action == "book_call" and score_result.is_qualified:
             await _handle_qualified_lead(conversation_id, phone, extracted_data, db)
         elif score_result.recommended_action == "send_rejection":
-            await _handle_rejected_lead(conversation_id, phone, score_result.reasoning, db)
+            await _handle_rejected_lead(
+                conversation_id, phone, score_result.reasoning, db
+            )
         else:
-            logger.info(f"Needs more info for conversation {conversation_id}, continuing conversation")
+            logger.info(
+                f"Needs more info for conversation {conversation_id}, continuing conversation"
+            )
 
     except Exception as e:
-        logger.error(f"Error scoring and taking action for conversation {conversation_id}: {e}")
+        logger.error(
+            f"Error scoring and taking action for conversation {conversation_id}: {e}"
+        )
         raise
 
 
 async def _handle_qualified_lead(
-    conversation_id: int,
-    phone: str,
-    extracted_data: ExtractedLeadData,
-    db: Session
+    conversation_id: int, phone: str, extracted_data: ExtractedLeadData, db: Session
 ):
     """Handle qualified lead by booking calendar slot"""
     try:
@@ -207,7 +267,7 @@ async def _handle_qualified_lead(
             slot_time=available_slot,
             lead_name="Prospect",  # Could extract name if we added that field
             lead_phone=phone,
-            lead_goals=extracted_data.goals
+            lead_goals=extracted_data.goals,
         )
 
         # Format booking message
@@ -226,7 +286,7 @@ Looking forward to helping you reach your goals!"""
             conversation_id=conversation_id,
             role="assistant",
             content=booking_message,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(booking_msg)
 
@@ -243,10 +303,7 @@ Looking forward to helping you reach your goals!"""
 
 
 async def _handle_rejected_lead(
-    conversation_id: int,
-    phone: str,
-    reasoning: str,
-    db: Session
+    conversation_id: int, phone: str, reasoning: str, db: Session
 ):
     """Handle rejected lead by sending polite rejection"""
     try:
@@ -269,7 +326,7 @@ We wish you all the best on your fitness journey!"""
             conversation_id=conversation_id,
             role="assistant",
             content=rejection_message,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc),
         )
         db.add(rejection_msg)
 

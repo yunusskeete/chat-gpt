@@ -1,6 +1,7 @@
 fastapi
 uvicorn[standard]
 sqlalchemy
+sqladmin
 pydantic
 pydantic-ai
 anthropic

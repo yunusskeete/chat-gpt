@@ -22,7 +22,7 @@ def seed_pt_preferences():
             print(f"PT preferences already exist for: {existing_pt.name}")
             return
 
-        # Create PT from environment variables
+        # Create PT from settings (which reads from env vars or pt_defaults.py)
         pt = PTPreferences(
             id=1,
             name=settings.pt_name,
@@ -31,7 +31,12 @@ def seed_pt_preferences():
             preferred_location=settings.pt_location,
             min_budget=settings.pt_min_budget,
             required_commitment=settings.pt_required_commitment,
-            specialty=settings.pt_specialty
+            specialty=settings.pt_specialty,
+            # Extended fields (will populate from pt_defaults.py by default)
+            bio=settings.pt_bio,
+            years_experience=settings.pt_years_experience,
+            certifications=settings.pt_certifications,
+            additional_info=settings.pt_additional_info,
         )
 
         db.add(pt)
